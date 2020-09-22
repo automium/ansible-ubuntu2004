@@ -1,0 +1,115 @@
+---
+
+- name: install os prerequisites
+  hosts: all
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: update repositories cache
+      apt:
+        update_cache: yes
+    - name: install prerequisites
+      package: name={{ item }} state=latest
+      with_items:
+        - curl
+        - jq
+        - rsyslog
+        - ca-certificates
+        - sudo
+        - python-apt
+        - software-properties-common
+        - tar
+        - unzip
+        - bzip2
+        - gzip
+        - git
+        - secure-delete
+    - name: install json2hcl
+      get_url:
+        url: https://github.com/kvz/json2hcl/releases/download/v0.0.6/json2hcl_v0.0.6_linux_amd64
+        dest: /usr/local/sbin/json2hcl
+        mode: 0555
+
+- name: prepare ansible virtualenv
+  hosts: all
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: create var project path
+      set_fact:
+        script_path: /usr/src/cloud
+    - name: install requirements
+      package: name="{{ item }}"
+      with_items:
+        - libffi-dev
+        - libssl-dev
+        - python3
+        - python3-pip
+        - python3-setuptools
+        - virtualenv
+    - name: create directory
+      file: path="{{ item }}" state=directory
+      with_items:
+        - "{{ script_path }}"
+        - "{{ script_path }}/roles"
+    - name: create requirements.txt
+      copy:
+        content: |
+          ansible==2.9.2
+          dnspython==2.0.0
+        dest: "{{ script_path }}/requirements.txt"
+        remote_src: yes
+    - name: install python requirements
+      pip:
+        requirements: "{{ script_path }}/requirements.txt"
+        virtualenv: "{{ script_path }}/venv"
+        virtualenv_python: python3
+
+- name: install consul
+  hosts: all
+  roles:
+    - role: automium.consul
+      consul_configs:
+        main:
+          bootstrap: true
+          bind_addr: 0.0.0.0
+          client_addr: 0.0.0.0
+          node_name: "{{ ansible_hostname }}"
+          data_dir: "{{ consul_data_dir }}"
+          encrypt: "K8n07GA/ZoANSmJ5zkvgOg=="
+          enable_syslog: true
+          datacenter: automium
+          server: true
+          ui: true
+
+- name: unattend upgrades
+  hosts: all
+  tasks:
+    - name: disable unattend upgrades
+      lineinfile:
+        path: /etc/apt/apt.conf.d/20auto-upgrades
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      with_items:
+        - { regexp: '^APT::Periodic::Update-Package-Lists', line: 'APT::Periodic::Update-Package-Lists "0";' }
+        - { regexp: '^APT::Periodic::Unattended-Upgrade', line: 'APT::Periodic::Unattended-Upgrade "0";' }
+
+- name: clean up image
+  hosts: all
+  tasks:
+    - name: stop consul
+      service: name=consul state=stopped enabled=no
+    - name: clean /opt/consul/data
+      file: path=/opt/consul/data state=absent
+    - name: cleanup image
+      shell: |
+        cloud-init clean -l -s
+        echo -n > /etc/machine-id
+        echo -n > /var/lib/dbus/machine-id
+        rm -rf /var/lib/cloud
+        rm -rf /run/cloud-init
+        rm -rf /home/ubuntu/.ssh/authorized_keys
+        rm -rf /root/.ssh/authorized_keys
+      args:
+        removes: /var/lib/cloud

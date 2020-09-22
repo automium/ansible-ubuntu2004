@@ -1,0 +1,4 @@
+---
+file:
+  /opt/consul/bin/consul:
+    exists: true
